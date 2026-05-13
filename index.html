@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Firewall Scenario Trainer</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#fff;color:#1a1a1a;padding:1.5rem}
+pre{font-family:ui-monospace,monospace}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+.vendor-btn{display:flex;align-items:center;gap:10px;padding:10px 16px;border-radius:12px;border:0.5px solid #e0e0e0;background:#fff;cursor:pointer;transition:border-color 0.15s}
+.scenario-tab{padding:6px 14px;font-size:13px;border-radius:8px;border:0.5px solid #e0e0e0;background:#fff;color:#666;display:flex;align-items:center;gap:6px;cursor:pointer}
+.card{border:0.5px solid #e0e0e0;border-radius:12px;overflow:hidden;margin-bottom:12px}
+.card-hd{padding:14px 20px;background:#f8f8f8;border-bottom:0.5px solid #e0e0e0}
+.card-bd{padding:20px}
+.task-card{border:2px solid transparent;border-radius:12px;padding:16px 20px;background:#fff;margin-bottom:10px;transition:border-color 0.2s;border:0.5px solid #e0e0e0}
+.answer-area{width:100%;font-size:14px;line-height:1.6;padding:12px 14px;border-radius:8px;border:1.5px solid #d0d0d0;background:#fff;color:#1a1a1a;resize:vertical;box-sizing:border-box;font-family:system-ui,-apple-system,sans-serif;margin-top:10px;min-height:120px}
+.answer-area:focus{outline:none}
+.btn-primary{padding:9px 20px;font-size:14px;font-weight:500;color:#fff;border:none;border-radius:8px;cursor:pointer}
+.btn-secondary{padding:8px 16px;font-size:13px;background:#fff;border:0.5px solid #d0d0d0;border-radius:8px;color:#1a1a1a;cursor:pointer}
+.ai-bubble{background:#f8f8f8;border:0.5px solid #e0e0e0;border-radius:12px;padding:14px 16px;font-size:14px;line-height:1.7;color:#1a1a1a;white-space:pre-wrap;margin-top:10px}
+.progress-bg{height:4px;background:#f0f0f0;border-radius:999px}
+.progress-fill{height:4px;border-radius:999px;transition:width 0.4s}
+</style>
+</head>
+<body>
+
+<h2 class="sr-only">Firewall scenario trainer — practice analysing firewall configs and get AI feedback</h2>
+
+<div style="padding:1rem 0" id="app"></div>
+
+<script>
+const VENDORS={fortinet:{name:"Fortinet FortiGate",abbr:"FG",accent:"#993C1D",bg:"#FAECE7",text:"#712B13",scenarios:[{id:"f1",title:"Policy ordering conflict",context:"A client believes they have blocked all social media access from their operations VLAN. Review their policy set and identify the problem.",config:`config firewall policy
+  edit 1
+      set name        "allow-ops-outbound"
+      set srcintf     "vlan-ops"
+      set dstintf     "wan1"
+      set srcaddr     "all"
+      set dstaddr     "all"
+      set action      accept
+      set service     "ALL"
+      set logtraffic  all
+  next
+  edit 2
+      set name        "block-social-media"
+      set srcintf     "vlan-ops"
+      set dstintf     "wan1"
+      set srcaddr     "all"
+      set dstaddr     "social-media-group"
+      set action      deny
+      set service     "HTTPS"
+      set logtraffic  all
+  next
+end`,tasks:["Identify the exact problem with this policy set.","Explain what traffic rule 2 is actually doing in practice.","Write what you would say to the client's security manager to explain the issue without being technical.","Write the corrected rule order and explain why it works."],modelAnswer:`Problem: Rule 1 matches ALL traffic from vlan-ops to wan1 on ALL services. Because FortiGate uses top-down first-match processing, every packet matches rule 1 and is accepted before rule 2 is ever evaluated. Rule 2 is permanently shadowed — it will never fire.\n\nWhat rule 2 is actually doing: nothing. Zero packets reach it.\n\nClient explanation: "Your block rule is in the right place logically, but FortiGate reads rules from top to bottom and stops at the first match. Right now, your 'allow everything' rule is above your 'block social media' rule, so every request gets approved before the block rule is even checked. It is like having a bouncer who waves everyone in before the ID checker gets a look."\n\nCorrected order: Move the deny rule (edit 2) above the broad accept rule (edit 1). Deny rules for specific destinations must always sit above broader accept rules that would otherwise match the same traffic.`,hint:"Focus on the order of rules and what FortiGate's first-match logic means for rules that follow a broad accept."},{id:"f2",title:"Interface role misconfiguration",context:"A client reports that traffic between their finance and operations VLANs is unexpectedly allowed even though they have a deny rule in place.",config:`config system interface
+  edit "vlan-finance"
+      set ip      10.20.1.1 255.255.255.0
+      set vlanid  100
+      set interface "internal1"
+      set role    lan
+  next
+  edit "vlan-ops"
+      set ip      10.20.2.1 255.255.255.0
+      set vlanid  200
+      set interface "internal1"
+      set role    lan
+  next
+end
+
+config firewall policy
+  edit 1
+      set name    "deny-finance-to-ops"
+      set srcintf "internal1"
+      set dstintf "internal1"
+      set srcaddr "10.20.1.0/24"
+      set dstaddr "10.20.2.0/24"
+      set action  deny
+  next
+  edit 2
+      set name    "allow-finance-internet"
+      set srcintf "vlan-finance"
+      set dstintf "wan1"
+      set srcaddr "all"
+      set dstaddr "all"
+      set action  accept
+      set service "HTTPS"
+  next
+end`,tasks:["Identify why the deny rule is not working as the client expects.","Explain the difference between referencing a parent interface versus a VLAN sub-interface in a policy.","Write the corrected rule referencing the correct interfaces.","Explain what the client should check to confirm the fix worked."],modelAnswer:`Problem: Rule 1 references "internal1" as both srcintf and dstintf. However, vlan-finance and vlan-ops are VLAN sub-interfaces of internal1. Traffic between the two VLANs traverses the VLAN interfaces, not the physical internal1 interface. The deny rule never matches.\n\nInterface reference: In FortiGate policy, you must reference the specific interface where traffic originates and terminates. A VLAN sub-interface is a distinct logical interface from its parent. Referencing the parent does not cover its child VLANs.\n\nCorrected rule: set srcintf "vlan-finance" / set dstintf "vlan-ops"\n\nVerification: Attempt traffic from 10.20.1.0/24 to 10.20.2.0/24 and confirm it is blocked. With logtraffic enabled, blocked sessions should appear in the traffic log as denied.`,hint:"Look carefully at which interfaces are referenced in the deny rule versus which interfaces are actually defined in the configuration."},{id:"f3",title:"Logging blind spot",context:"During a pre-PoC review a client shares their policy set. You notice a pattern that would concern any Pre-Sales Engineer preparing to demonstrate Tufin's compliance visibility features.",config:`config firewall policy
+  edit 12
+      set name       "allow-backup-to-offsite"
+      set srcintf    "internal2"
+      set dstintf    "wan2"
+      set srcaddr    "backup-servers"
+      set dstaddr    "offsite-backup-ip"
+      set action     accept
+      set service    "TCP/8080"
+      set logtraffic disable
+  next
+  edit 23
+      set name       "allow-dns-resolution"
+      set srcintf    "internal1"
+      set dstintf    "wan1"
+      set srcaddr    "all"
+      set dstaddr    "all"
+      set action     accept
+      set service    "DNS"
+      set logtraffic disable
+  next
+  edit 31
+      set name       "allow-ntp-sync"
+      set srcintf    "internal1"
+      set dstintf    "wan1"
+      set srcaddr    "all"
+      set dstaddr    "all"
+      set action     accept
+      set service    "NTP"
+      set logtraffic disable
+  next
+  edit 44
+      set name       "allow-monitoring-agents"
+      set srcintf    "internal2"
+      set dstintf    "internal1"
+      set srcaddr    "monitoring-servers"
+      set dstaddr    "all"
+      set action     accept
+      set service    "TCP/9100"
+      set logtraffic disable
+  next
+end`,tasks:["Identify the security risk created by this logging configuration.","Explain specifically why these four services are higher risk than others to have unlogged.","Write what you would say to a CISO who responds: 'We disabled logging because those rules generate too much noise.'","Describe what Tufin's compliance reporting would show for these rules and why that matters for a PCI DSS audit."],modelAnswer:`Security risk: All four rules have logtraffic disabled — any traffic matching them generates zero log entries. Backup, DNS, NTP, and monitoring traffic are completely invisible in the firewall log.\n\nWhy these four are higher risk: Backup traffic is a common data exfiltration pathway. DNS is the most commonly abused protocol for C2 communication (DNS tunnelling). NTP is used in amplification attacks and as a covert channel. Monitoring agent traffic creates an internal east-west pathway with no visibility.\n\nResponse to CISO: "I understand — high-volume rules like DNS and NTP can generate thousands of log entries per hour. The risk is that these are also the protocols most commonly abused for data exfiltration and C2 traffic. Setting logtraffic to 'utm' instead of 'disable' logs only anomalies and security events, not every session. You get the visibility you need without the full log volume."\n\nTufin compliance impact: For PCI DSS Requirement 10, Tufin's compliance reports would flag these rules as non-compliant because logging is disabled. An auditor reviewing a Tufin report would see these as explicit findings.`,hint:"Think about what these protocols are used for beyond their legitimate purpose, and what a compliance auditor would say about unlogged firewall rules."},{id:"f4",title:"VDOM management gap",context:"A client is considering Tufin for their FortiGate estate. During discovery they share their device topology. Identify the management risks before the PoC begins.",config:`Device: FG-HQ-01 (Headquarters)
+VDOMs:
+  root       admin: fw-admin-alice  interfaces: internal1, internal2, wan1
+  DMZ-VDOM   admin: fw-admin-bob    interfaces: dmz1, wan2
+  Guest-VDOM admin: fw-admin-carol  interfaces: guest-wifi, wan1
+
+Device: FG-BRANCH-LON (London)
+VDOMs:
+  root       admin: fw-admin-dave   interfaces: internal1, wan1
+
+Device: FG-BRANCH-DXB (Dubai)
+VDOMs:
+  root       admin: fw-admin-eve    interfaces: internal1, wan1
+
+Shared resource: wan1 used by both root and Guest-VDOM on FG-HQ-01
+Change process: each admin logs into their VDOM directly via CLI
+Audit trail: per-VDOM logs only, no consolidated view`,tasks:["Identify three specific management risks in this topology.","Explain the shared wan1 interface risk in plain language.","Write two discovery questions you would ask before scoping the Tufin PoC.","Explain what Tufin SecureTrack+ would give this client that they do not have today."],modelAnswer:`Three management risks:\n1. No consolidated view — five VDOMs across three devices, five admins. No single person can see the complete policy picture.\n2. Shared wan1 on FG-HQ-01 — root and Guest-VDOM both route through wan1. A change in one affects the other but neither admin can see the other's rules.\n3. No consolidated audit trail — logs are per-VDOM with no aggregation. Correlating a security event requires querying each VDOM separately.\n\nShared wan1: "Imagine two departments sharing the same front door but managed by different teams. If one team changes the lock, it affects the other — but neither team is told when the other makes changes."\n\nDiscovery questions:\n1. "Have you ever had a change in one VDOM that unexpectedly affected traffic managed by another team?"\n2. "How do you produce a complete picture of all firewall policy across your estate for a compliance audit — and how long does that take?"\n\nTufin SecureTrack+: A single unified view of all five VDOMs across all three devices — every rule, object, and change in one dashboard. Compliance reports generated automatically across the full estate with a complete audit trail.`,hint:"Think about visibility, accountability, and what happens when shared resources are managed independently by different people."}]},checkpoint:{name:"Check Point",abbr:"CP",accent:"#185FA5",bg:"#E6F1FB",text:"#0C447C",scenarios:[{id:"c1",title:"Policy drift after emergency change",context:"A client's security team made emergency changes directly on two gateways three weeks ago. You are reviewing the environment before a Tufin PoC.",config:`Security Management Server:
+  Policy: Corporate-Policy-v4.2
+  Last install to all gateways: 6 weeks ago
+  SMS change log: no entries in last 3 weeks
+
+Gateway: GW-LONDON
+  Running: Corporate-Policy-v4.2 + CLI changes (3 weeks ago)
+  Local changes: 3 rules added via CLI by eng-dave
+
+Gateway: GW-DUBAI
+  Running: Corporate-Policy-v4.2 + CLI changes (3 weeks ago)
+  Local changes: 2 rules modified via CLI by eng-eve
+
+Gateway: GW-NAIROBI
+  Running: Corporate-Policy-v4.2
+  Last SMS install: 2 weeks ago
+
+Gateway: GW-SINGAPORE
+  Running: Corporate-Policy-v4.2
+  Last SMS install: 6 weeks ago`,tasks:["Identify the immediate risk in this environment.","Explain what will happen the next time the security team installs policy from the SMS.","Write what you would say to the CISO to explain the risk without implying the team was negligent.","Explain how Tufin SecureTrack+ would have prevented or surfaced this situation."],modelAnswer:`Immediate risk: GW-LONDON and GW-DUBAI are running a different policy than what the SMS believes is deployed. The SMS shows Corporate-Policy-v4.2 is current everywhere — but London and Dubai have additional rules the SMS has no record of. The actual enforced policy is unknown.\n\nNext policy install: CLI changes on London and Dubai will be silently overwritten with Corporate-Policy-v4.2. If those changes patched a vulnerability or added a business-critical exception, they will disappear with no warning and no record.\n\nCISO explanation: "During the incident, your team did the right thing by making fast changes. The challenge is that those changes were made directly on the gateways rather than through the SMS, which means the SMS no longer reflects what is actually running. This is a common pattern after incidents — speed is prioritised over process. The risk is that the next routine policy deployment will silently revert those changes."\n\nTufin SecureTrack+: Continuously compares the policy deployed on each gateway with the last known-good SMS baseline. If a gateway diverges, SecureTrack raises a configuration drift alert immediately rather than weeks later.`,hint:"Focus on the gap between what the SMS believes is deployed and what is actually running on the gateways."},{id:"c2",title:"Policy layer design problem",context:"A client is restructuring their Check Point policy to give different teams ownership of different rule sections. Review their proposed design and identify the flaw.",config:`Proposed policy structure (ordered layers):
+
+Layer 1: Global-Security (owner: security-ops)
+  Rule 1: block known-bad-ips → any → deny
+  Rule 2: allow internal → internal → accept (all services)
+  Rule 3: cleanup → any → any → deny
+
+Layer 2: Network-Access (owner: network-team)
+  Rule 1: allow finance-vlan → internet → accept (HTTPS, DNS)
+  Rule 2: allow ops-vlan → internet → accept (HTTPS, DNS, SMTP)
+  Rule 3: deny finance-vlan → ops-vlan → deny
+
+Layer 3: VPN-Rules (owner: network-team)
+  Rule 1: allow vpn-users → internal-servers → accept (RDP, SSH)
+  Rule 2: allow site-to-site → corporate-subnets → accept`,tasks:["Identify the critical flaw in Layer 1 that undermines the entire policy design.","Explain what traffic Layers 2 and 3 will ever actually enforce.","Write the corrected Layer 1 that would make the design work as intended.","Explain this to the network team lead who designed it without dismissing their work."],modelAnswer:`Critical flaw: Rule 2 in Layer 1 allows all internal-to-internal traffic on all services. In ordered layers, a matching rule stops evaluation — Layers 2 and 3 are only reached if no rule in Layer 1 matched. Because Rule 2 accepts all internal-to-internal traffic, finance, ops, and VPN traffic is accepted by Layer 1 and never reaches Layers 2 or 3.\n\nWhat Layers 2 and 3 actually enforce: Almost nothing. Traffic that is not internal-to-internal might fall through, but the VPN rules in Layer 3 are almost certainly bypassed because VPN user traffic to internal servers is internal-to-internal.\n\nCorrected Layer 1:\n  Rule 1: block known-bad-ips → any → deny  [keep]\n  Rule 2: cleanup → any → any → accept (continue to next layer)\nRemove the broad internal accept entirely.\n\nExplanation: "The design is solid — separating ownership by layer is exactly right. The issue is one rule in the global layer that catches traffic before the team-specific layers can evaluate it. If checkpoint 1 waves through everyone in the building, checkpoints 2 and 3 never get to check their badges. We just need to remove that broad rule from Layer 1."`,hint:"Work through what happens to a packet from the finance VLAN step by step through each ordered layer."},{id:"c3",title:"Shared admin account audit failure",context:"A client is preparing for a PCI DSS audit. Review their Check Point management setup and identify every audit-related risk.",config:`Security Management Server: R81
+Admin accounts:
+  fw-admin       shared by 6 engineers, password known to all
+  backup-admin   used for scheduled backups only
+
+SmartConsole sessions last 90 days:
+  fw-admin:     847 sessions
+  backup-admin: 12 sessions
+
+Changes last 30 days (all attributed to fw-admin):
+  Day  1: Added rule "allow-new-saas-app" (source: finance-vlan)
+  Day  8: Modified "block-external-rdp" → action changed deny to accept
+  Day 15: Deleted rule "deny-guest-to-internal"
+  Day 22: Added rule "allow-legacy-backup" (logtraffic: disable)
+  Day 28: Modified object "internal-servers" (added 3 new IPs)
+
+Change management: engineers notify team via Slack`,tasks:["List every PCI DSS Requirement 10 finding an auditor would raise.","Identify the single most dangerous change in the last 30 days and explain why.","Write the three questions a PCI DSS auditor will ask that this client cannot answer today.","Explain what Tufin SecureTrack+ would give an auditor that this environment cannot provide."],modelAnswer:`PCI DSS Requirement 10 findings:\n1. Shared admin account — Req 10.2.1 requires all access be attributable to an individual\n2. 847 sessions attributed to fw-admin — no change can be attributed to a specific person\n3. Slack-based change management is not an auditable change control process — Req 10.5 requires tamper-evident change records\n4. Day 22 rule with logging disabled — any logging-disabled rule in a CDE network is a finding\n\nMost dangerous change — Day 8: "block-external-rdp" changed from deny to accept. RDP is one of the most common ransomware entry vectors. This change has no individual attribution, no change ticket, and only a Slack notification. An auditor treats this as unauthorised until proven otherwise.\n\nThree unanswerable questions:\n1. "For the Day 8 change that opened external RDP — who authorised it and what was the business justification?"\n2. "Provide all firewall changes in the last 12 months with the name of the engineer who made each one."\n3. "For each change, show the approval record that existed before implementation."\n\nTufin SecureTrack+: Complete change log for every rule and object modification — timestamp, exact before-and-after diff, admin identity. PCI DSS Requirement 10 compliance reports generated automatically. Risk-based alerting would have flagged the Day 8 RDP change immediately.`,hint:"Work through the five changes one by one. One should stand out immediately as the highest risk."},{id:"c4",title:"Gateway inventory and connectivity gap",context:"A client is onboarding to Tufin. Their Check Point environment has not been audited recently. Review the gateway status before the PoC proceeds.",config:`SMS: CP-SMS-01 (R81.20)
+
+Registered gateways:
+  GW-PARIS    R81.20  Connected     Last install: 2 days ago
+  GW-BERLIN   R81.20  Connected     Last install: 2 days ago
+  GW-ROME     R80.40  Connected     Last install: 8 months ago
+  GW-WARSAW   R81     Disconnected  Last install: 4 months ago
+  GW-MADRID   R81.20  Connected     Last install: 2 days ago
+  GW-ATHENS   R80.10  Unknown       Last install: 14 months ago
+
+Policy packages:
+  Western-Europe-Policy → GW-PARIS, GW-MADRID, GW-BERLIN
+  Eastern-Europe-Policy → GW-ROME, GW-WARSAW
+  Legacy-Policy         → GW-ATHENS`,tasks:["Identify every problem in this gateway inventory before Tufin is deployed.","Explain the risk of GW-ATHENS specifically.","Write the three things you would ask the client to resolve before the PoC begins.","Explain why this pre-PoC discovery exercise is itself a demonstration of value."],modelAnswer:`Problems identified:\n1. GW-WARSAW is Disconnected — SMS cannot communicate with it; current running policy is unknown\n2. GW-ATHENS is Unknown status with a 14-month-old policy install — highest risk gateway in the estate\n3. GW-ROME is R80.40 while SMS is R81.20 — significant version mismatch\n4. GW-ATHENS is R80.10 — potentially end-of-life with known unpatched vulnerabilities\n5. Eastern-Europe-Policy covers GW-ROME (8 months since install) and GW-WARSAW (disconnected) — policy consistency cannot be guaranteed\n\nGW-ATHENS risk: Unknown status means the SMS cannot determine if it is alive or what policy it is running. A 14-month-old policy means every security rule added or modified since then does not exist on this gateway.\n\nThree things to resolve:\n1. Restore GW-WARSAW connectivity and investigate why it disconnected\n2. Investigate GW-ATHENS immediately — is it still active, what is it protecting, does it need decommissioning?\n3. Plan a version upgrade path for GW-ROME and GW-ATHENS before Tufin deployment\n\nWhy this is itself a demonstration of value: "What we just did in five minutes — reviewing your gateway inventory and finding four distinct risk findings — is something your team would need to log into each gateway individually to discover today. Tufin SecureTrack+ surfaces this automatically and continuously."`,hint:"Go through each gateway systematically — status, version, and policy recency each tell a different story."}]},paloalto:{name:"Palo Alto Networks",abbr:"PA",accent:"#854F0B",bg:"#FAEEDA",text:"#633806",scenarios:[{id:"p1",title:"App-ID bypass in production rules",context:"A client recently migrated from Cisco ASA to Palo Alto. Their team rewrote all rules using port and protocol to ensure nothing broke during migration. Review the policy.",config:`Rule: allow-finance-web
+  source zone:  Finance-Zone
+  dest zone:    Internet-Zone
+  source:       10.20.1.0/24
+  destination:  any
+  application:  any
+  service:      TCP/80, TCP/443
+  action:       allow
+
+Rule: allow-ops-collaboration
+  source zone:  Ops-Zone
+  dest zone:    Internet-Zone
+  source:       10.20.2.0/24
+  destination:  any
+  application:  any
+  service:      TCP/443
+  action:       allow
+
+Rule: allow-voip
+  source zone:  Office-Zone
+  dest zone:    Internet-Zone
+  source:       10.30.0.0/24
+  destination:  any
+  application:  any
+  service:      TCP/443, UDP/5060, UDP/5061
+  action:       allow`,tasks:["Identify what each rule actually allows versus what it was intended to allow.","Explain the specific risk created by 'application: any' combined with 'service: TCP/443'.","Rewrite the allow-finance-web rule correctly using App-ID.","Write what you would say to a client who responds: 'We have always done it this way and never had a problem.'"],modelAnswer:`What each rule actually allows:\n- allow-finance-web: any application on TCP/80 or TCP/443 — Dropbox, personal Gmail, YouTube, torrenting, C2 frameworks using HTTPS. App-ID is bypassed entirely.\n- allow-ops-collaboration: any application on TCP/443 — the name implies Teams or Zoom but allows everything on HTTPS.\n- allow-voip: UDP ports are appropriate for SIP, but TCP/443 allows any HTTPS application from the office zone.\n\nRisk of application:any + TCP/443: Virtually every modern application — including malware and C2 frameworks — uses HTTPS to blend in with legitimate traffic. App-ID is completely bypassed.\n\nCorrected allow-finance-web:\n  application: web-browsing, ssl\n  service:     application-default\nRemove the explicit port entries. 'application-default' enforces that the app runs on its expected port.\n\nClient response: "The fact that nothing obvious has gone wrong is actually the risk — port-based rules on a next-generation firewall don't fail visibly, they just silently allow more than intended. You invested in a firewall that can identify and control applications, but the rules tell it to ignore that capability. We can fix this without downtime."`,hint:"Work through each rule and ask: what applications run on these ports beyond the ones the rule name implies?"},{id:"p2",title:"Zone design and implicit traffic",context:"A client reports unexpected traffic between their web servers and database servers. Review their zone configuration and identify why traffic is getting through.",config:`Zones configured:
+  Trust    → interfaces: internal-lan, server-vlan-10
+  Untrust  → interfaces: wan1
+  DMZ      → interfaces: dmz1
+
+Security policy:
+  Rule 1: allow-users-web
+    source zone: Trust
+    dest zone:   Trust
+    source:      10.10.0.0/16  (internal-lan)
+    destination: 10.50.1.0/24  (server-vlan-10)
+    application: web-browsing, ssl
+    action:      allow
+
+  Rule 2: allow-internet
+    source zone: Trust
+    dest zone:   Untrust
+    source:      10.10.0.0/16
+    destination: any
+    application: web-browsing, ssl
+    action:      allow
+
+  Rule 3: cleanup
+    source zone: any
+    dest zone:   any
+    application: any
+    action:      deny
+
+Problem: database servers on server-vlan-10 receiving unexpected
+connections from internal-lan on ports other than web-browsing/ssl`,tasks:["Identify why unexpected traffic is reaching the database servers.","Explain the zone design mistake that created this problem.","Write the corrected zone design and explain the principle it follows.","Explain what the client should do immediately to stop unexpected traffic while the redesign is implemented."],modelAnswer:`Why unexpected traffic is reaching the database servers: internal-lan and server-vlan-10 are both in the Trust zone. In Palo Alto, intra-zone traffic (same source and destination zone) is allowed by default — no security policy rule is required. Because both interfaces are in Trust, all traffic from internal-lan to server-vlan-10 flows freely regardless of Rule 1.\n\nZone design mistake: placing user workstations and servers in the same zone removes the firewall's ability to inspect or control traffic between them.\n\nCorrected zone design:\n  Trust   → interfaces: internal-lan only\n  Servers → interfaces: server-vlan-10\n  Untrust → interfaces: wan1\n  DMZ     → interfaces: dmz1\n\nThe principle: each zone should represent a distinct trust level. Systems at different trust levels must always be in separate zones.\n\nImmediate fix: Add an explicit intra-zone security policy that denies traffic from 10.10.0.0/16 to 10.50.1.0/24 that does not match approved applications.`,hint:"The key is understanding what 'intra-zone' means in Palo Alto and what the default behaviour is for traffic within the same zone."},{id:"p3",title:"Panorama policy consistency gap",context:"A client runs 10 Palo Alto firewalls managed through Panorama. A team member added an emergency rule directly on one firewall three weeks ago. Review the environment.",config:`Panorama: PA-PANORAMA-01
+
+Device Groups:
+  Financial-Services-DG
+    Members: FW-LON-01, FW-LON-02, FW-NYC-01, FW-NYC-02
+    Policy: FS-Corporate-v3
+    Last commit-and-push: 5 days ago
+
+  Operations-DG
+    Members: FW-SGP-01, FW-SGP-02, FW-DXB-01, FW-DXB-02
+    Policy: Ops-Corporate-v3
+    Last commit-and-push: 5 days ago
+
+  Legacy-DG
+    Members: FW-PAR-01, FW-PAR-02
+    Policy: Legacy-Policy-v1
+    Last commit-and-push: 4 months ago
+
+Local policy on FW-LON-02 (added directly, not via Panorama):
+  Rule: emergency-allow-vendor-access
+    source zone:  Untrust
+    dest zone:    Trust
+    source:       203.0.113.45/32
+    destination:  10.20.5.10
+    application:  any
+    service:      TCP/22, TCP/3389
+    action:       allow
+    Added by: local-admin (3 weeks ago)`,tasks:["Identify every problem with the emergency rule on FW-LON-02.","Explain what will happen the next time Panorama pushes FS-Corporate-v3 to Financial-Services-DG.","Identify the second problem in this environment unrelated to the emergency rule.","Write what you would tell the CISO about the emergency rule."],modelAnswer:`Problems with the emergency rule:\n1. Allows inbound SSH (TCP/22) and RDP (TCP/3389) from an external IP to an internal server — both are extremely high-risk inbound access paths\n2. Application is 'any' — App-ID bypassed\n3. Added locally — invisible to anyone reviewing the Panorama central policy; does not appear in Panorama's audit log\n4. Added by local-admin with no record of authorisation, business justification, or intended duration\n\nNext Panorama push: The local policy on FW-LON-02 will be overwritten. The emergency rule will be silently deleted.\n\nSecond problem — Legacy-DG: FW-PAR-01 and FW-PAR-02 last received a policy push 4 months ago. Every security rule added to Legacy-Policy-v1 in the last 4 months has not been deployed.\n\nCISO message: "Three weeks ago, someone added a rule to one of your London firewalls that opens inbound SSH and RDP from an external IP to an internal server. This rule does not exist in Panorama — it was added locally, so it does not appear in any audit log or compliance report. We do not know who authorised it or whether it is still needed. Before we proceed with the Tufin PoC, I strongly recommend treating this as a security incident."`,hint:"There are two separate problems — the emergency rule and something completely different in the device group inventory."},{id:"p4",title:"User-ID policy failure",context:"A client restricted access to a sensitive trading application to Trading-Desk AD group members only. Users from other departments are still getting through.",config:`Security policy rule: allow-trading-app
+  source zone:    Internal-Zone
+  dest zone:      App-Zone
+  source address: 10.0.0.0/8
+  destination:    trading-app-server (172.16.50.10)
+  source user:    Trading-Desk@company.com
+  application:    ssl
+  service:        application-default
+  action:         allow
+
+User-ID configuration:
+  AD integration: active
+  Agent:          monitoring DC-01 only
+  DC-01 covers:   London office authentication
+
+  DC-02: Dublin office   — not monitored
+  DC-03: Frankfurt office — not monitored
+  DC-04: Singapore office — not monitored
+
+Problem: Dublin, Frankfurt, Singapore users accessing
+the trading app despite not being in Trading-Desk`,tasks:["Identify why users outside Trading-Desk are accessing the application.","Explain the User-ID coverage gap in plain language.","Write what needs to change in the User-ID configuration to fix the problem.","Explain what happens if the User-ID agent goes offline and what the client should configure to handle this safely."],modelAnswer:`Why outside users are accessing the application: The User-ID agent only monitors DC-01 (London). Users in Dublin, Frankfurt, and Singapore authenticate against DC-02, DC-03, DC-04 — none monitored. When these users generate traffic to the trading app, Palo Alto cannot resolve their identity and the policy falls back to the broad source address (10.0.0.0/8), allowing access.\n\nPlain language: "Imagine a security guard checking ID badges at the front door but the building has three other unguarded entrances. Your User-ID agent only knows who comes in through London. Your Dublin, Frankfurt, and Singapore users are coming in through the unguarded doors."\n\nWhat needs to change: Deploy the User-ID agent to monitor DC-02, DC-03, and DC-04. Every domain controller handling user authentication must be covered.\n\nAgent offline behaviour: If the agent goes offline, Palo Alto falls back to source address — a fail-open condition where all internal users get access. Safe configuration: add an explicit deny rule below the allow-trading-app rule blocking all traffic to the trading app from 10.0.0.0/8 for unresolved users. This creates fail-closed: if User-ID cannot resolve identity, access is denied.`,hint:"Focus on which domain controllers are monitored and what happens to traffic from users whose identity cannot be resolved."}]}};
+
+const PHASE={READING:0,WORKING:1,DONE:2};
+let S={vendor:null,sIdx:0,phases:{},taskIdx:{},answers:{},selfAssess:{},aiResponses:{},loading:{}};
+
+function vd(){return S.vendor?VENDORS[S.vendor]:null}
+function sc(){const v=vd();return v?v.scenarios[S.sIdx]:null}
+function pid(){const s=sc();return s?s.id:null}
+function getPhase(id){return S.phases[id]??PHASE.READING}
+function getTIdx(id){return S.taskIdx[id]??0}
+function getAnswers(id){return S.answers[id]??{}}
+
+async function callAI(systemPrompt, userMsg, onChunk, onDone){
+  try{
+    const res=await fetch('/.netlify/functions/claude',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,stream:true,system:systemPrompt,messages:[{role:'user',content:userMsg}]})
+    });
+    if(!res.ok){const e=await res.json();onDone('Error: '+(e.error?.message||res.status));return;}
+    const reader=res.body.getReader();const decoder=new TextDecoder();let buf='';
+    while(true){
+      const{done,value}=await reader.read();if(done)break;
+      buf+=decoder.decode(value,{stream:true});
+      const lines=buf.split('\n');buf=lines.pop();
+      for(const line of lines){
+        if(line.startsWith('data: ')){
+          const d=line.slice(6);if(d==='[DONE]')continue;
+          try{const j=JSON.parse(d);if(j.delta?.text)onChunk(j.delta.text);}catch{}
+        }
+      }
+    }
+    onDone(null);
+  }catch(e){onDone('Network error: '+e.message);}
+}
+
+function render(){
+  const app=document.getElementById('app');
+  if(!app)return;
+  const v=vd();const s=sc();const p=s?pid():null;
+  const phase=p?getPhase(p):PHASE.READING;
+  const tIdx=p?getTIdx(p):0;
+  const answers=p?getAnswers(p):{};
+  const doneCt=v?v.scenarios.filter(sc=>getPhase(sc.id)>=PHASE.DONE).length:0;
+
+  let html=``;
+
+  html+=`<div style="display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap">`;
+  Object.entries(VENDORS).forEach(([k,v2])=>{
+    const active=S.vendor===k;
+    html+=`<button class="vendor-btn" onclick="selectVendor('${k}')" style="${active?`border-color:${v2.accent};border-width:1.5px;background:${v2.bg}`:''}">
+      <div style="width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;background:${active?v2.accent:'#f0f0f0'};color:${active?'#fff':'#666'}">${v2.abbr}</div>
+      <span style="font-size:14px;font-weight:${active?500:400};color:${active?v2.text:'#1a1a1a'}">${v2.name}</span>
+    </button>`;
+  });
+  html+=`</div>`;
+
+  if(!v){html+=`<div style="padding:48px 0;text-align:center;color:#999;font-size:14px;">Select a vendor to begin</div>`;document.getElementById('app').innerHTML=html;return;}
+
+  const pct=Math.round((doneCt/v.scenarios.length)*100);
+  html+=`<div style="margin-bottom:20px">
+    <div style="display:flex;justify-content:space-between;margin-bottom:5px">
+      <span style="font-size:12px;color:#666">Progress</span>
+      <span style="font-size:12px;font-weight:500;color:#1a1a1a">${doneCt}/${v.scenarios.length} completed</span>
+    </div>
+    <div class="progress-bg"><div class="progress-fill" style="background:${v.accent};width:${pct}%"></div></div>
+  </div>`;
+
+  html+=`<div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">`;
+  v.scenarios.forEach((sc2,i)=>{
+    const active=S.sIdx===i;const done=getPhase(sc2.id)>=PHASE.DONE;const sa=S.selfAssess[sc2.id];
+    let badge='';
+    if(done){badge=`<span style="font-size:11px;font-weight:500;color:${sa==='strong'?'#16a34a':sa==='partial'?'#d97706':'#dc2626'}">${sa==='strong'?'✓':sa==='partial'?'~':'✗'}</span>`;}
+    html+=`<button class="scenario-tab" onclick="switchScenario(${i})" style="${active?`border-color:${v.accent};border-width:1.5px;background:${v.bg};color:${v.text}`:''}">
+      ${badge}${i+1}. ${sc2.title}
+    </button>`;
+  });
+  html+=`</div>`;
+
+  if(!s){document.getElementById('app').innerHTML=html;return;}
+
+  html+=`<div class="card">
+    <div class="card-hd">
+      <p style="font-size:11px;font-weight:500;color:#888;text-transform:uppercase;letter-spacing:0.06em;margin:0 0 3px">Scenario ${S.sIdx+1} of ${v.scenarios.length} — ${v.name}</p>
+      <p style="font-size:15px;font-weight:500;color:#1a1a1a;margin:0">${s.title}</p>
+    </div>
+    <div class="card-bd">
+      <p style="font-size:14px;color:#555;line-height:1.6;margin:0 0 16px">${s.context}</p>
+      <pre style="background:#f8f8f8;border:0.5px solid #e0e0e0;border-radius:8px;padding:14px 16px;font-size:12px;color:#1a1a1a;white-space:pre-wrap;line-height:1.7;margin:0 0 4px;overflow-x:auto">${s.config}</pre>`;
+
+  if(phase===PHASE.READING){
+    html+=`<div style="padding:20px 0 8px;text-align:center">
+      <button class="btn-primary" style="background:${v.accent}" onclick="startWorking()">Start scenario</button>
+    </div>`;
+  }
+
+  if(phase>=PHASE.WORKING){
+    html+=`<div style="margin-top:20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <span style="font-size:12px;font-weight:500;color:#888;text-transform:uppercase;letter-spacing:0.06em">Tasks</span>
+        <span style="font-size:12px;color:#888">${tIdx+1} of ${s.tasks.length}</span>
+      </div>`;
+
+    s.tasks.forEach((t,i)=>{
+      const done2=i<tIdx;const active2=i===tIdx;const locked=i>tIdx&&phase!==PHASE.DONE;
+      const ans=answers[i]||'';
+      html+=`<div class="task-card" style="border-color:${active2?v.accent:done2?'#d0d0d0':'#e0e0e0'};${locked?'opacity:0.45':''}">
+        <div style="display:flex;align-items:flex-start;gap:10px">
+          <div style="width:24px;height:24px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;background:${active2?v.bg:done2?'#dcfce7':'#f0f0f0'};color:${active2?v.text:done2?'#16a34a':'#888'}">
+            ${done2?'✓':i+1}
+          </div>
+          <p style="font-size:14px;color:#1a1a1a;line-height:1.6;margin:0;flex:1">${t}</p>
+        </div>`;
+
+      if(active2){
+        html+=`<div style="margin-top:12px">
+          <label style="font-size:12px;font-weight:500;color:${v.text};display:block;margin-bottom:6px">Your answer</label>
+          <textarea class="answer-area" id="ta-${p}-${i}" placeholder="Write your answer here..." style="border-color:${v.accent}40" oninput="saveAns(${i},this.value)">${ans}</textarea>
+          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+            <button class="btn-primary" style="background:${v.accent}" onclick="submitTask(${i})" ${!ans.trim()?'disabled style="opacity:0.45;cursor:not-allowed;background:'+v.accent+'"':''}>
+              ${i<s.tasks.length-1?'Submit and continue':'Submit final answer'}
+            </button>
+            <button class="btn-secondary" onclick="getTaskFeedback(${i})" ${!ans.trim()||S.loading[p+'-'+i]?'disabled style="opacity:0.45;cursor:not-allowed"':''}>
+              ${S.loading[p+'-'+i]?'Getting feedback...':'Get AI feedback ↗'}
+            </button>
+          </div>
+          ${S.aiResponses[p+'-'+i]?`<div class="ai-bubble"><span style="font-size:11px;font-weight:500;color:#888;text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:6px">AI feedback</span><span id="ai-resp-${p}-${i}">${S.aiResponses[p+'-'+i]}</span></div>`:''}
+        </div>`;
+      } else if(done2){
+        html+=`<div style="margin-top:10px;padding:10px 12px;background:#f8f8f8;border-radius:8px">
+          <p style="font-size:11px;font-weight:500;color:#888;margin:0 0 4px;text-transform:uppercase;letter-spacing:0.06em">Your answer</p>
+          <p style="font-size:13px;color:#1a1a1a;line-height:1.6;margin:0;white-space:pre-wrap">${ans}</p>
+        </div>`;
+      }
+      html+=`</div>`;
+    });
+    html+=`</div>`;
+  }
+
+  if(phase===PHASE.DONE){
+    const sa=S.selfAssess[p];
+    html+=`<div style="margin-top:20px;border:0.5px solid #e0e0e0;border-radius:12px;overflow:hidden">
+      <div style="padding:12px 16px;background:${v.bg};border-bottom:0.5px solid ${v.accent}30">
+        <p style="font-size:11px;font-weight:500;color:${v.text};text-transform:uppercase;letter-spacing:0.06em;margin:0">Model answer</p>
+      </div>
+      <div style="padding:14px 16px">
+        <p style="font-size:14px;color:#1a1a1a;line-height:1.7;margin:0;white-space:pre-wrap">${s.modelAnswer}</p>
+      </div>
+    </div>`;
+
+    if(!sa){
+      html+=`<div style="margin-top:16px;padding:14px 16px;border:0.5px solid #e0e0e0;border-radius:8px">
+        <p style="font-size:13px;font-weight:500;color:#1a1a1a;margin:0 0 12px">How did you do overall?</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button onclick="assess('strong')" style="padding:8px 16px;font-size:13px;font-weight:500;cursor:pointer;background:#dcfce7;color:#16a34a;border:0.5px solid #86efac;border-radius:8px">Got it</button>
+          <button onclick="assess('partial')" style="padding:8px 16px;font-size:13px;font-weight:500;cursor:pointer;background:#fef9c3;color:#d97706;border:0.5px solid #fde047;border-radius:8px">Partial</button>
+          <button onclick="assess('missed')" style="padding:8px 16px;font-size:13px;font-weight:500;cursor:pointer;background:#fee2e2;color:#dc2626;border:0.5px solid #fca5a5;border-radius:8px">Need to review</button>
+        </div>
+      </div>`;
+    } else {
+      html+=`<div style="margin-top:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:12px 16px;background:#f8f8f8;border-radius:8px">
+        <span style="font-size:14px;color:#666">Scenario complete</span>
+        <div style="display:flex;gap:8px">
+          ${S.sIdx<v.scenarios.length-1?`<button class="btn-primary" style="background:${v.accent}" onclick="nextScenario()">Next scenario</button>`:''}
+        </div>
+      </div>`;
+    }
+  }
+
+  html+=`</div></div>`;
+  document.getElementById('app').innerHTML=html;
+}
+
+function selectVendor(k){S.vendor=k;S.sIdx=0;render();}
+function switchScenario(i){S.sIdx=i;render();}
+function startWorking(){const p=pid();if(!p)return;S.phases[p]=PHASE.WORKING;S.taskIdx[p]=0;render();}
+function saveAns(i,val){const p=pid();if(!p)return;if(!S.answers[p])S.answers[p]={};S.answers[p][i]=val;}
+
+function submitTask(i){
+  const p=pid();const s=sc();if(!p||!s)return;
+  const ans=(S.answers[p]||{})[i]||'';
+  if(!ans.trim())return;
+  if(i<s.tasks.length-1){S.taskIdx[p]=i+1;render();}
+  else{S.phases[p]=PHASE.DONE;S.taskIdx[p]=i;render();}
+}
+
+async function getTaskFeedback(i){
+  const p=pid();const s=sc();const v=vd();if(!p||!s||!v)return;
+  const ans=(S.answers[p]||{})[i]||'';
+  if(!ans.trim())return;
+  const key=p+'-'+i;
+  S.loading[key]=true;S.aiResponses[key]='';render();
+  const sysPrompt=`You are a firewall and network security expert coaching a pre-sales engineer. Give concise, direct feedback on their answer to a specific task. Be honest — point out what's correct, what's missing or imprecise, and the single most important thing to improve. Keep it under 150 words.`;
+  const userMsg=`Vendor: ${v.name}\nScenario: ${s.title}\nConfiguration:\n${s.config}\n\nTask ${i+1}: ${s.tasks[i]}\n\nThe trainee's answer:\n${ans}\n\nFeedback:`;
+  let resp='';
+  await callAI(sysPrompt,userMsg,
+    (chunk)=>{resp+=chunk;const el=document.getElementById('ai-resp-'+p+'-'+i);if(el)el.textContent=resp;else{S.aiResponses[key]=resp;}},
+    (err)=>{S.loading[key]=false;S.aiResponses[key]=err||resp;render();}
+  );
+  S.loading[key]=false;S.aiResponses[key]=resp;render();
+}
+
+function assess(val){const p=pid();if(!p)return;S.selfAssess[p]=val;render();}
+function nextScenario(){S.sIdx++;render();}
+
+render();
+</script>
+</body>
+</html>
