@@ -482,7 +482,7 @@ function render(){
 function selectVendor(k){S.vendor=k;S.sIdx=0;render();}
 function switchScenario(i){S.sIdx=i;render();}
 function startWorking(){const p=pid();if(!p)return;S.phases[p]=PHASE.WORKING;S.taskIdx[p]=0;render();}
-function saveAns(i,val){const p=pid();if(!p)return;if(!S.answers[p])S.answers[p]={};S.answers[p][i]=val;}
+function saveAns(i,val){const p=pid();if(!p)return;if(!S.answers[p])S.answers[p]={};S.answers[p][i]=val;render();}
 
 function submitTask(i){
   const p=pid();const s=sc();if(!p||!s)return;
