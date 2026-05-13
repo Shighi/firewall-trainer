@@ -18,6 +18,9 @@ exports.handler = async (event) => {
   try {
     const body = JSON.parse(event.body);
 
+    // Force stream off — Netlify Functions don't support streaming responses
+    body.stream = false;
+
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -28,15 +31,15 @@ exports.handler = async (event) => {
       body: JSON.stringify(body)
     });
 
-    const text = await res.text();
+    const data = await res.json();
 
     return {
       statusCode: res.status,
       headers: {
-        'Content-Type': res.headers.get('Content-Type') || 'application/json',
+        'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
       },
-      body: text
+      body: JSON.stringify(data)
     };
   } catch (e) {
     return {
